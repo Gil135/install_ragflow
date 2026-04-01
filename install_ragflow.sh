@@ -648,7 +648,7 @@ main() {
     else
         log_error "Script start_ragflow.sh não encontrado"
         exit 1
-    fi
+    nlfi
 }
 
 # Executar
