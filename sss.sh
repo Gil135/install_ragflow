@@ -2,8 +2,7 @@
 
 # RAGFLOW v0.24.0 - Script de Instalação Completo
 # Segue documentação oficial: https://ragflow.io/docs/dev/begin_dev
-# Cria start_ragflow.sh automaticamente se não existir
-# Chama start automaticamente após instalação
+# Copia automaticamente start_ragflow.sh para a pasta ragflow
 
 set -euo pipefail
 
@@ -48,31 +47,36 @@ log_section() {
 # Verificar pré-requisitos
 check_prerequisites() {
     log_section "Verificando Pré-requisitos"
-    
+
+    # Verificar Python
     if ! command -v python3 &> /dev/null; then
         log_error "Python 3 não encontrado"
         exit 1
     fi
     log_success "Python 3 encontrado: $(python3 --version)"
 
+    # Verificar Git
     if ! command -v git &> /dev/null; then
         log_error "Git não encontrado"
         exit 1
     fi
     log_success "Git encontrado: $(git --version)"
 
+    # Verificar Docker
     if ! command -v docker &> /dev/null; then
         log_error "Docker não encontrado"
         exit 1
     fi
     log_success "Docker encontrado: $(docker --version)"
 
+    # Verificar Node.js
     if ! command -v node &> /dev/null; then
         log_error "Node.js não encontrado"
         exit 1
     fi
     log_success "Node.js encontrado: $(node --version)"
 
+    # Verificar npm
     if ! command -v npm &> /dev/null; then
         log_error "npm não encontrado"
         exit 1
@@ -83,12 +87,14 @@ check_prerequisites() {
 # Instalar uv e pre-commit
 install_tools() {
     log_section "Instalando uv e pre-commit"
-    
+
+    # Verificar se pipx está instalado
     if ! command -v pipx &> /dev/null; then
         log_info "Instalando pipx..."
         python3 -m pip install --user pipx
     fi
 
+    # Instalar uv
     if ! command -v uv &> /dev/null; then
         log_info "Instalando uv..."
         pipx install uv
@@ -96,6 +102,7 @@ install_tools() {
         log_success "uv já está instalado"
     fi
 
+    # Instalar pre-commit
     if ! command -v pre-commit &> /dev/null; then
         log_info "Instalando pre-commit..."
         pipx install pre-commit
@@ -107,7 +114,7 @@ install_tools() {
 # Clonar repositório
 clone_repository() {
     log_section "Clonando Repositório RAGFLOW"
-    
+
     if [ -d "$INSTALL_DIR" ]; then
         log_info "Diretório $INSTALL_DIR já existe, removendo..."
         rm -rf "$INSTALL_DIR"
@@ -116,6 +123,7 @@ clone_repository() {
     log_info "Clonando repositório oficial..."
     git clone https://github.com/infiniflow/ragflow.git "$INSTALL_DIR"
     
+    # Criar arquivo de log
     mkdir -p "$INSTALL_DIR"
     touch "$LOG_FILE"
     
@@ -125,31 +133,35 @@ clone_repository() {
 # Instalar dependências Python
 install_python_deps() {
     log_section "Instalando Dependências Python"
-    
+
     cd "$INSTALL_DIR"
+
     log_info "Sincronizando dependências com uv..."
     uv sync --python 3.12
+
     log_info "Baixando dependências adicionais..."
     uv run download_deps.py
-    log_success "Dependências Python instaladas"
 
+    log_success "Dependências Python instaladas"
 }
 
 # Configurar pre-commit
 setup_precommit() {
     log_section "Configurando pre-commit"
-    
+
     cd "$INSTALL_DIR"
     pre-commit install
+
     log_success "pre-commit configurado"
 }
 
 # Instalar jemalloc
 install_jemalloc() {
     log_section "Instalando jemalloc"
-    
+
     if command -v apt-get &> /dev/null; then
         log_info "Detectado Ubuntu/Debian"
+        #sudo apt-get update
         sudo apt-get install -y libjemalloc-dev
     elif command -v yum &> /dev/null; then
         log_info "Detectado CentOS/RHEL"
@@ -171,9 +183,9 @@ install_jemalloc() {
 # Configurar /etc/hosts
 setup_hosts() {
     log_section "Configurando /etc/hosts"
-    
+
     local hosts_entry="127.0.0.1       es01 infinity mysql minio redis sandbox-executor-manager"
-    
+
     if grep -q "es01" /etc/hosts; then
         log_success "Entrada /etc/hosts já existe"
     else
@@ -183,64 +195,68 @@ setup_hosts() {
     fi
 }
 
-# Ajustar porta MySQL em service_conf.yaml
-adjust_mysql_port() {
-    log_section "Ajustando Configuração MySQL"
-    
-    local config_file="$INSTALL_DIR/conf/service_conf.yaml"
-    local backup_file="${config_file}.backup.$(date +%Y%m%d_%H%M%S)"
-    
-    if [ ! -f "$config_file" ]; then
-        log_error "Arquivo $config_file não encontrado"
-        return 1
-    fi
+# Iniciar serviços Docker
+start_docker_services() {
+    log_section "Iniciando Serviços Docker"
 
-    # Fazer backup
-    log_info "Fazendo backup: $backup_file"
-    cp "$config_file" "$backup_file"
-    log_success "Backup criado: $backup_file"
+    cd "$INSTALL_DIR"
 
-    # Verificar se já está ajustado
-    if grep -q "port: 5455" "$config_file"; then
-        log_success "Porta MySQL já está configurada para 5455"
-        return 0
-    fi
+    log_info "Parando containers antigos..."
+    docker compose -f docker/docker-compose-base.yml down 2>/dev/null || true
+    sleep 5
 
-    # Ajustar porta
-    log_info "Ajustando porta MySQL de 3306 para 5455..."
-    sed -i 's/port: 3306/port: 5455/g' "$config_file"
+    log_info "Iniciando containers..."
+    docker compose -f docker/docker-compose-base.yml up -d
 
-    # Verificar se foi ajustado
-    if grep -q "port: 5455" "$config_file"; then
-        log_success "Porta MySQL ajustada para 5455"
-        log_info "Backup original: $backup_file"
-    else
-        log_error "Falha ao ajustar porta MySQL"
-        return 1
-    fi
+    log_info "Aguardando serviços ficarem saudáveis..."
+    sleep 60
+
+    log_info "Status dos containers:"
+    docker compose -f docker/docker-compose-base.yml ps
+
+    log_success "Serviços Docker iniciados"
 }
 
 # Instalar dependências frontend
 install_frontend_deps() {
     log_section "Instalando Dependências Frontend"
-    
+
     cd "$INSTALL_DIR/web"
+
     log_info "Instalando dependências npm..."
     npm install
+
     log_success "Dependências frontend instaladas"
 }
 
-# Criar script start_ragflow.sh
-create_startup_script() {
+# Copiar start_ragflow.sh para pasta ragflow
+copy_startup_script() {
+    log_section "Copiando Script de Startup"
+
+    local startup_script="$SCRIPT_DIR/start_ragflow.sh"
+    local target_script="$INSTALL_DIR/start_ragflow.sh"
+
+    if [ -f "$startup_script" ]; then
+        log_info "Copiando $startup_script para $INSTALL_DIR..."
+        cp "$startup_script" "$target_script"
+        chmod +x "$target_script"
+        log_success "Script de startup copiado: $target_script"
+    else
+        log_error "Script de startup não encontrado em $startup_script"
+        log_info "Criando script de startup padrão..."
+        create_default_startup_script "$target_script"
+    fi
+}
+
+# Criar script de startup padrão
+create_default_startup_script() {
     local target="$1"
     
-    log_info "Criando script de startup: $target"
-    
-    cat > "$target" << 'STARTUP_SCRIPT'
+    cat > "$target" << 'STARTUP_EOF'
 #!/bin/bash
 
-# RAGFLOW v0.24.0 - Script de Inicialização Otimizado
-# Captura portas dinâmicas e exibe URLs corretas
+# RAGFLOW v0.24.0 - Script de Startup Rápido
+# Use após instalação completa
 
 set -euo pipefail
 
@@ -251,13 +267,6 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 BOLD='\033[1m'
-
-# Configurações
-RAGFLOW_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DOCKER_DIR="${RAGFLOW_HOME}/docker"
-WEB_DIR="${RAGFLOW_HOME}/web"
-LOG_DIR="${RAGFLOW_HOME}/logs"
-PID_FILE="${RAGFLOW_HOME}/.ragflow.pids"
 
 # Criar diretório de logs
 mkdir -p "$LOG_DIR"
@@ -286,6 +295,7 @@ log_section() {
 # Parar processos antigos
 cleanup_old_processes() {
     log_section "Limpando Processos Antigos"
+
     pkill -f "npm run dev" 2>/dev/null || true
     pkill -f "python3 api/ragflow_server.py" 2>/dev/null || true
     pkill -f "task_executor.py" 2>/dev/null || true
@@ -301,23 +311,17 @@ cleanup_old_processes() {
 # Iniciar Docker
 start_docker() {
     log_section "Iniciando Serviços Docker"
-    
+
     cd "$DOCKER_DIR"
-    docker build -f Dockerfile.deps -t infiniflow/ragflow_deps .
-    
-    log_info "Verificando containers existentes..."
-    
-    RUNNING=$(docker compose -f docker-compose-base.yml ps -q 2>/dev/null | wc -l)
-    
-    if [ "$RUNNING" -gt 0 ]; then
-        log_success "Containers já estão rodando"
-        docker compose -f docker-compose-base.yml ps
-        return 0
-    fi
+
+    log_info "Parando containers antigos..."
+    docker compose -f docker-compose-base.yml down 2>/dev/null || true
+    sleep 5
 
     log_info "Iniciando containers..."
     docker compose -f docker-compose-base.yml up -d
     sleep 60
+
     log_info "Verificando status..."
     docker compose -f docker-compose-base.yml ps
 
@@ -336,13 +340,15 @@ start_docker() {
 # Iniciar Task Executor
 start_task_executor() {
     log_section "Iniciando Task Executor"
-    
+
     cd "$RAGFLOW_HOME"
     source .venv/bin/activate
     export PYTHONPATH="$(pwd)"
+
     JEMALLOC_PATH=$(pkg-config --variable=libdir jemalloc 2>/dev/null || echo "")/libjemalloc.so
 
     log_info "Iniciando em background..."
+
     if [[ -n "$JEMALLOC_PATH" && -f "$JEMALLOC_PATH" ]]; then
         LD_PRELOAD="$JEMALLOC_PATH" python3 rag/svr/task_executor.py 1 >> "$LOG_DIR/task_executor.log" 2>&1 &
     else
@@ -351,6 +357,7 @@ start_task_executor() {
 
     local pid=$!
     echo "$pid" >> "$PID_FILE"
+
     log_info "Task Executor PID: $pid"
     log_info "Aguardando inicialização..."
 
@@ -371,15 +378,17 @@ start_task_executor() {
 # Iniciar Backend
 start_backend() {
     log_section "Iniciando Backend"
-    
+
     cd "$RAGFLOW_HOME"
     source .venv/bin/activate
     export PYTHONPATH="$(pwd)"
+
     log_info "Iniciando em background..."
     python3 api/ragflow_server.py >> "$LOG_DIR/ragflow_server.log" 2>&1 &
 
     local pid=$!
     echo "$pid" >> "$PID_FILE"
+
     log_info "Backend PID: $pid"
     log_info "Aguardando inicialização..."
 
@@ -400,30 +409,36 @@ start_backend() {
 # Iniciar Frontend e capturar porta
 start_frontend() {
     log_section "Iniciando Frontend"
-    
+
     cd "$WEB_DIR"
+
     log_info "Iniciando em background..."
     npm run dev >> "$LOG_DIR/frontend.log" 2>&1 &
 
     local pid=$!
     echo "$pid" >> "$PID_FILE"
+
     log_info "Frontend PID: $pid"
     log_info "Aguardando inicialização..."
 
     local elapsed=0
     local frontend_url=""
-
+    
     while [[ $elapsed -lt 60 ]]; do
+        # Procurar pela URL do Vite nos logs
         frontend_url=$(grep -oP "Local:\s+\K(http://[^\s]+)" "$LOG_DIR/frontend.log" 2>/dev/null | head -1)
+        
         if [[ -n "$frontend_url" ]]; then
             log_success "Frontend iniciado"
             echo "$frontend_url"
             return 0
         fi
+        
         sleep 3
         elapsed=$((elapsed + 3))
     done
 
+    # Se não encontrou nos logs, usar padrão
     log_success "Frontend iniciado (porta padrão)"
     echo "http://localhost:9222"
 }
@@ -433,14 +448,15 @@ show_final_info() {
     local frontend_url=$1
 
     log_section "✓ RAGFLOW Iniciado com Sucesso!"
+
     echo ""
     echo -e "${GREEN}${BOLD}🌐 ACESSO:${NC}"
     echo -e "  ${BLUE}Frontend:${NC}  $frontend_url"
     echo -e "  ${BLUE}Backend:${NC}   http://127.0.0.1:9380/"
     echo ""
     echo -e "${GREEN}${BOLD}🔐 CREDENCIAIS:${NC}"
-    echo -e "  ${BLUE}Email:${NC}     admin@ragflow.com"
-    echo -e "  ${BLUE}Senha:${NC}     admin123"
+    echo -e "  ${BLUE}Email:${NC}     seu email"
+    echo -e "  ${BLUE}Senha:${NC}     sua senha"
     echo ""
     echo -e "${GREEN}${BOLD}📋 LOGS:${NC}"
     echo -e "  ${BLUE}Task Executor:${NC} tail -f $LOG_DIR/task_executor.log"
@@ -455,7 +471,7 @@ show_final_info() {
 # Parar RAGFLOW
 stop_ragflow() {
     log_section "Parando RAGFLOW"
-    
+
     if [[ -f "$PID_FILE" ]]; then
         while IFS= read -r pid; do
             if kill -0 "$pid" 2>/dev/null; then
@@ -469,6 +485,7 @@ stop_ragflow() {
     pkill -f "npm run dev" 2>/dev/null || true
     pkill -f "python3 api/ragflow_server.py" 2>/dev/null || true
     pkill -f "task_executor.py" 2>/dev/null || true
+
     sleep 3
 
     cd "$DOCKER_DIR"
@@ -480,7 +497,7 @@ stop_ragflow() {
 # Main
 main() {
     log_section "RAGFLOW v0.24.0 - Inicialização"
-    
+
     cleanup_old_processes
 
     if ! start_docker; then
@@ -539,13 +556,13 @@ case "${1:-start}" in
         ps aux | grep -E "task_executor|ragflow_server|npm run dev" | grep -v grep || echo "Nenhum processo encontrado"
         ;;
     help)
-        cat << 'HELP'
-RAGFLOW v0.24.0 - Script de Inicialização
+        cat << EOF
+${BOLD}RAGFLOW v0.24.0 - Script de Inicialização${NC}
 
-Uso:
-$0 [COMANDO]
+${BOLD}Uso:${NC}
+  $0 [COMANDO]
 
-Comandos:
+${BOLD}Comandos:${NC}
   start       Inicia RAGFLOW (padrão)
   stop        Para RAGFLOW
   restart     Reinicia RAGFLOW
@@ -553,12 +570,13 @@ Comandos:
   status      Mostra status
   help        Mostra esta mensagem
 
-Exemplos:
-$0 start
-$0 stop
-$0 restart
-$0 logs
-HELP
+${BOLD}Exemplos:${NC}
+  $0 start
+  $0 stop
+  $0 restart
+  $0 logs
+
+EOF
         ;;
     *)
         log_error "Comando desconhecido: $1"
@@ -566,53 +584,38 @@ HELP
         exit 1
         ;;
 esac
-STARTUP_SCRIPT
+STARTUP_EOF
 
     chmod +x "$target"
-    log_success "Script de startup criado: $target"
-}
-
-# Copiar ou criar start_ragflow.sh para pasta ragflow
-setup_startup_script() {
-    log_section "Configurando Script de Startup"
-    
-    local startup_script="$SCRIPT_DIR/start_ragflow.sh"
-    local target_script="$INSTALL_DIR/start_ragflow.sh"
-    
-    if [ -f "$startup_script" ]; then
-        log_info "Copiando $startup_script para $INSTALL_DIR..."
-        cp "$startup_script" "$target_script"
-        chmod +x "$target_script"
-        log_success "Script de startup copiado: $target_script"
-    else
-        log_info "Script de startup não encontrado em $startup_script"
-        log_info "Criando script de startup padrão..."
-        create_startup_script "$target_script"
-    fi
+    log_success "Script de startup padrão criado: $target"
 }
 
 # Exibir próximos passos
 show_next_steps() {
     log_section "✓ Instalação Concluída com Sucesso!"
-    
+
     echo -e "${GREEN}${BOLD}Próximos Passos:${NC}"
     echo ""
-    echo -e "${BLUE}RAGFLOW está iniciando automaticamente...${NC}"
+    echo -e "${BLUE}1. Iniciar RAGFLOW (opção mais fácil):${NC}"
+    echo "   cd $INSTALL_DIR"
+    echo "   ./start_ragflow.sh"
     echo ""
-    echo -e "${BLUE}Acessar RAGFLOW:${NC}"
+    echo -e "${BLUE}2. Ou iniciar manualmente:${NC}"
+    echo "   cd $INSTALL_DIR"
+    echo "   source .venv/bin/activate"
+    echo "   export PYTHONPATH=\$(pwd)"
+    echo "   bash docker/launch_backend_service.sh"
+    echo ""
+    echo -e "${BLUE}3. Em outro terminal, iniciar frontend:${NC}"
+    echo "   cd $INSTALL_DIR/web"
+    echo "   npm run dev"
+    echo ""
+    echo -e "${BLUE}4. Acessar RAGFLOW:${NC}"
     echo "   http://localhost:9222/"
     echo ""
-    echo -e "${BLUE}Credenciais Padrão:${NC}"
+    echo -e "${BLUE}5. Credenciais Padrão:${NC}"
     echo "   Email: admin@ragflow.com"
     echo "   Senha: admin123"
-    echo ""
-    echo -e "${BLUE}Comandos Úteis:${NC}"
-    echo "   cd $INSTALL_DIR"
-    echo "   ./start_ragflow.sh start    # Iniciar"
-    echo "   ./start_ragflow.sh stop     # Parar"
-    echo "   ./start_ragflow.sh restart  # Reiniciar"
-    echo "   ./start_ragflow.sh logs     # Ver logs"
-    echo "   ./start_ragflow.sh status   # Status"
     echo ""
     echo -e "${BLUE}Logs:${NC}"
     echo "   $LOG_FILE"
@@ -621,11 +624,12 @@ show_next_steps() {
 
 # Main
 main() {
+    # Criar diretório e arquivo de log
     mkdir -p "$INSTALL_DIR"
     touch "$LOG_FILE"
-    
+
     log_section "RAGFLOW v0.24.0 - Instalação Completa"
-    
+
     check_prerequisites
     install_tools
     clone_repository
@@ -633,22 +637,12 @@ main() {
     setup_precommit
     install_jemalloc
     setup_hosts
-    adjust_mysql_port
+    start_docker_services
     install_frontend_deps
-    setup_startup_script
+    copy_startup_script
     show_next_steps
-    
+
     log_success "Instalação finalizada!"
-    log_info "Iniciando RAGFLOW automaticamente..."
-    
-    # Chamar start automaticamente
-    cd "$INSTALL_DIR"
-    if [ -f "start_ragflow.sh" ]; then
-        ./start_ragflow.sh start
-    else
-        log_error "Script start_ragflow.sh não encontrado"
-        exit 1
-    fi
 }
 
 # Executar
