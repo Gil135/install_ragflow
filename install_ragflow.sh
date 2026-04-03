@@ -114,7 +114,7 @@ clone_repository() {
     fi
 
     log_info "Clonando repositório oficial..."
-    git clone https://github.com/infiniflow/ragflow.git "$INSTALL_DIR"
+    git clone https://github.com/Gil135/ragflow.git "$INSTALL_DIR"
     
     mkdir -p "$INSTALL_DIR"
     touch "$LOG_FILE"
