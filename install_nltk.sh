@@ -614,8 +614,8 @@ show_next_steps() {
     echo "   http://localhost:9222/"
     echo ""
     echo -e "${BLUE}5. Credenciais Padrão:${NC}"
-    echo "   Email: admin@ragflow.com"
-    echo "   Senha: admin123"
+    echo "   Email: admin@ragflow.io
+    echo "   Senha: admin"
     echo ""
     echo -e "${BLUE}Logs:${NC}"
     echo "   $LOG_FILE"
